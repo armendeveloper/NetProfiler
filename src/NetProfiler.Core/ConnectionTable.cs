@@ -25,11 +25,12 @@ public static class ConnectionTable
     {
         var size = 0;
         var buffer = IntPtr.Zero;
+        var result = ErrorInsufficientBuffer;
         try
         {
             for (var attempt = 0; attempt < 5; attempt++)
             {
-                var result = GetExtendedTcpTable(buffer, ref size, false, family, TcpTableOwnerPidAll, 0);
+                result = GetExtendedTcpTable(buffer, ref size, false, family, TcpTableOwnerPidAll, 0);
                 if (result == 0)
                     break;
                 if (result != ErrorInsufficientBuffer)
@@ -39,7 +40,8 @@ public static class ConnectionTable
                 size += 4096; // the table may grow between calls
                 buffer = Marshal.AllocHGlobal(size);
             }
-            if (buffer == IntPtr.Zero)
+            // Only read a buffer the API actually filled; a fresh, unfilled one holds garbage.
+            if (result != 0 || buffer == IntPtr.Zero)
                 return;
 
             var count = Marshal.ReadInt32(buffer);

@@ -17,12 +17,13 @@ public partial class App : Application
         var args = e.Args;
         var screenshotPath = ValueAfter(args, "--screenshot");
 
-        // Two instances would fight over the same kernel trace session, so only one runs at a time.
-        // A restart-as-admin waits briefly for the old instance to close.
-        if (screenshotPath is null && !AcquireSingleInstance(args.Contains("--restarted") ? TimeSpan.FromSeconds(10) : TimeSpan.Zero))
+        // Two instances would fight over the same kernel trace session, so only one runs at a time
+        // (screenshot runs included). A restart-as-admin waits briefly for the old instance to close.
+        if (!AcquireSingleInstance(args.Contains("--restarted") ? TimeSpan.FromSeconds(10) : TimeSpan.Zero))
         {
-            MessageBox.Show("NetProfiler is already running.", "NetProfiler", MessageBoxButton.OK, MessageBoxImage.Information);
-            Shutdown();
+            if (screenshotPath is null)
+                MessageBox.Show("NetProfiler is already running.", "NetProfiler", MessageBoxButton.OK, MessageBoxImage.Information);
+            Shutdown(screenshotPath is null ? 0 : 2);
             return;
         }
 

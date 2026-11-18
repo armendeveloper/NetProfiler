@@ -82,19 +82,35 @@ public sealed class WindowsFirewall
         {
             RemoveRules(policy, target);
             var stamp = $"Blocked by NetProfiler on {DateTime.Now:yyyy-MM-dd HH:mm}";
-            foreach (var direction in new[] { FirewallDirection.Inbound, FirewallDirection.Outbound })
+            try
             {
-                dynamic rule = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule", throwOnError: true)!)!;
-                rule.Name = FirewallRuleNames.For(target, direction);
-                rule.Description = stamp;
-                rule.Grouping = FirewallRuleNames.Group;
-                rule.Protocol = ProtocolAny;
-                rule.RemoteAddresses = target.ToString();
-                rule.Direction = direction == FirewallDirection.Inbound ? DirectionIn : DirectionOut;
-                rule.Action = ActionBlock;
-                rule.Profiles = AllProfiles;
-                rule.Enabled = true;
-                policy.Rules.Add(rule);
+                foreach (var direction in new[] { FirewallDirection.Inbound, FirewallDirection.Outbound })
+                {
+                    dynamic rule = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule", throwOnError: true)!)!;
+                    rule.Name = FirewallRuleNames.For(target, direction);
+                    rule.Description = stamp;
+                    rule.Grouping = FirewallRuleNames.Group;
+                    rule.Protocol = ProtocolAny;
+                    rule.RemoteAddresses = target.ToString();
+                    rule.Direction = direction == FirewallDirection.Inbound ? DirectionIn : DirectionOut;
+                    rule.Action = ActionBlock;
+                    rule.Profiles = AllProfiles;
+                    rule.Enabled = true;
+                    policy.Rules.Add(rule);
+                }
+            }
+            catch
+            {
+                // Never leave a half block (inbound only) behind: undo what was added, then report the error.
+                try
+                {
+                    RemoveRules(policy, target);
+                }
+                catch (Exception)
+                {
+                    // Keep the original error; it is the one worth showing.
+                }
+                throw;
             }
         }
         finally
@@ -127,6 +143,8 @@ public sealed class WindowsFirewall
         }
     }
 
+    private const int ErrorFileNotFound = unchecked((int)0x80070002);
+
     private static bool RuleExists(dynamic policy, string name)
     {
         try
@@ -134,7 +152,9 @@ public sealed class WindowsFirewall
             var rule = policy.Rules.Item(name);
             return rule is not null;
         }
-        catch (Exception ex) when (ex is COMException or FileNotFoundException)
+        // Only "no such rule" means absent. Anything else (firewall service down, RPC failure) must
+        // surface, or Unblock would report success without removing anything.
+        catch (Exception ex) when (ex.HResult == ErrorFileNotFound)
         {
             return false;
         }

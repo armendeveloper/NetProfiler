@@ -37,6 +37,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private DateTime _lastSampleTime;
     private DateTime _lastFirewallRefresh = DateTime.MinValue;
     private bool _firewallRefreshRunning;
+    private int _firewallRefreshGeneration;
     private bool _disposed;
     private double _peakDown, _peakUp;
 
@@ -438,6 +439,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             await Task.Run(() => _firewall.Block(target));
             AddLog($"Blocked {target}{(string.IsNullOrEmpty(hostName) ? "" : $" ({hostName})")}.", LogLevel.Warning);
+            return true;
         }
         catch (UnauthorizedAccessException)
         {
@@ -445,8 +447,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Inform("Windows refused the firewall change. Make sure NetProfiler is running as administrator.", "Block failed");
             return false;
         }
-        await RefreshFirewallAsync(force: true);
-        return true;
+        finally
+        {
+            // Refresh even after an unexpected error so the list shows what the firewall really has.
+            await RefreshFirewallAsync(force: true);
+        }
     }
 
     private Task UnblockAsync(BlockedRow? row) => row is null ? Task.CompletedTask : UnblockTargetAsync(row.Target);
@@ -470,7 +475,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             AddLog($"Windows refused to remove the firewall rule for {target}.", LogLevel.Error);
             Inform("Windows refused the firewall change. Make sure NetProfiler is running as administrator.", "Unblock failed");
         }
-        await RefreshFirewallAsync(force: true);
+        finally
+        {
+            await RefreshFirewallAsync(force: true);
+        }
     }
 
     private async Task UnblockAllAsync()
@@ -487,11 +495,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         if (_firewallRefreshRunning && !force)
             return;
+        // Refreshes can overlap (a forced one after a block, a periodic one while a dialog is open).
+        // Only the newest may apply its result, or an older read could undo a block in the list.
+        var generation = ++_firewallRefreshGeneration;
         _firewallRefreshRunning = true;
         _lastFirewallRefresh = DateTime.UtcNow;
         try
         {
             var (rules, state) = await Task.Run(() => (_firewall.GetBlocked(), _firewall.GetState()));
+            if (generation != _firewallRefreshGeneration)
+                return;
             _blockedTargets = rules.Select(r => r.Target).ToList();
 
             Blocked.Clear();
@@ -512,14 +525,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 ? ""
                 : $"Windows Firewall is turned off for the active network profile ({profiles}). Blocks won't take effect until it is turned back on.";
         }
-        catch (Exception ex)
+        catch (Exception ex) when (generation == _firewallRefreshGeneration)
         {
             FirewallStatus = "Windows Firewall unavailable";
             AddLog($"Could not read Windows Firewall: {ex.Message}", LogLevel.Error);
         }
+        catch (Exception)
+        {
+            // A newer refresh is in flight and will report the current state.
+        }
         finally
         {
-            _firewallRefreshRunning = false;
+            if (generation == _firewallRefreshGeneration)
+                _firewallRefreshRunning = false;
         }
     }
 

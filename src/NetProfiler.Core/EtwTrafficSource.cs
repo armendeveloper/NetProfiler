@@ -109,14 +109,24 @@ public sealed class EtwTrafficSource : IDisposable
     private static TraceEventSession OpenSession()
     {
         // Windows 8+ allows private-named kernel sessions, which avoids fighting other tools for
-        // the single "NT Kernel Logger". Fall back to that name if the private one is refused.
+        // the single "NT Kernel Logger". Restarting our own name is fine (leftover from a crash).
         try
         {
-            return Enable(new TraceEventSession(SessionName));
+            return Enable(new TraceEventSession(SessionName, TraceEventSessionOptions.Create));
         }
-        catch (Exception)
+        catch (Exception privateError)
         {
-            return Enable(new TraceEventSession(KernelTraceEventParser.KernelSessionName));
+            // Only borrow "NT Kernel Logger" if nobody else is using it: NoRestartOnCreate makes this
+            // fail instead of silently stopping another tool's trace (WPR, xperf, security software).
+            try
+            {
+                return Enable(new TraceEventSession(KernelTraceEventParser.KernelSessionName,
+                    TraceEventSessionOptions.Create | TraceEventSessionOptions.NoRestartOnCreate));
+            }
+            catch (Exception)
+            {
+                throw new InvalidOperationException(privateError.Message, privateError);
+            }
         }
     }
 
