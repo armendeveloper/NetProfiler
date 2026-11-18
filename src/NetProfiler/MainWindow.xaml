@@ -1,0 +1,497 @@
+﻿<Window x:Class="NetProfiler.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctl="clr-namespace:NetProfiler.Controls"
+        xmlns:vm="clr-namespace:NetProfiler.ViewModels"
+        Title="NetProfiler — real-time network profiler"
+        Width="1440" Height="900" MinWidth="1100" MinHeight="660"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource Bg0}" Foreground="{StaticResource Text}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+
+    <Window.Resources>
+        <!-- Shows an "empty" hint over a grid when it has no rows -->
+        <Style x:Key="EmptyWhenNoRows" TargetType="TextBlock" BasedOn="{StaticResource EmptyState}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Tag.Items.Count, RelativeSource={RelativeSource Self}}" Value="0">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <DataTemplate x:Key="BlockButtonCell">
+            <Button Style="{StaticResource RowActionButton}"
+                    Command="{Binding DataContext.ToggleBlockCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                    CommandParameter="{Binding}" />
+        </DataTemplate>
+
+        <!-- Rate on top, running total underneath: keeps the connections table narrow -->
+        <DataTemplate x:Key="DownCell">
+            <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center">
+                <TextBlock Text="{Binding InRateText}" Style="{StaticResource RateDown}" />
+                <TextBlock Text="{Binding TotalInText}" Style="{StaticResource CellNumber}" Foreground="{StaticResource Faint}" FontSize="11" />
+            </StackPanel>
+        </DataTemplate>
+
+        <DataTemplate x:Key="UpCell">
+            <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center">
+                <TextBlock Text="{Binding OutRateText}" Style="{StaticResource RateUp}" />
+                <TextBlock Text="{Binding TotalOutText}" Style="{StaticResource CellNumber}" Foreground="{StaticResource Faint}" FontSize="11" />
+            </StackPanel>
+        </DataTemplate>
+
+        <DataTemplate x:Key="RemoteAddressCell">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Style="{StaticResource BlockedBadge}">
+                    <TextBlock Style="{StaticResource BlockedBadgeText}" />
+                </Border>
+                <TextBlock Text="{Binding RemoteAddress}" Style="{StaticResource Mono}" />
+            </StackPanel>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid x:Name="Root" Background="{StaticResource Bg0}">
+        <Grid Margin="22,16,22,10">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="230" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <DockPanel Grid.Row="0" Margin="0,0,0,16">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBox Width="270" Tag="Filter by app, IP, host or port…"
+                             Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged, Delay=150}"
+                             ToolTip="Filters every table. Esc clears.">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Escape" Command="{Binding ClearFilterCommand}" />
+                        </TextBox.InputBindings>
+                    </TextBox>
+                    <Button Margin="10,0,0,0" MinWidth="86" Content="{Binding PauseButtonText}" Command="{Binding TogglePauseCommand}"
+                            ToolTip="Freeze the tables to read them; capture keeps running" />
+                    <Button Margin="8,0,0,0" Content="Export CSV" Command="{Binding ExportCommand}"
+                            ToolTip="Save the connections table (as filtered and sorted) to a CSV file" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="36" Height="36" CornerRadius="9" Background="{StaticResource DownSoft}">
+                        <Canvas Width="24" Height="20">
+                            <Polyline Points="1,15 6,9 10,12 16,4 23,8" Stroke="{StaticResource Down}" StrokeThickness="2.2"
+                                      StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                            <Polyline Points="1,19 6,16 10,17.5 16,13 23,15" Stroke="{StaticResource Up}" StrokeThickness="1.6"
+                                      StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Opacity="0.9" />
+                        </Canvas>
+                    </Border>
+                    <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="NetProfiler" FontFamily="{StaticResource DisplayFont}" FontSize="19" FontWeight="SemiBold" />
+                        <TextBlock Text="Real-time network profiler" Foreground="{StaticResource Muted}" FontSize="12" />
+                    </StackPanel>
+                    <Border Margin="18,0,0,0" CornerRadius="11" Padding="10,3,11,4" VerticalAlignment="Center">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="{StaticResource WarnSoft}" />
+                                <Setter Property="TextElement.Foreground" Value="{StaticResource Warn}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsCapturing}" Value="True">
+                                        <Setter Property="Background" Value="{StaticResource OkSoft}" />
+                                        <Setter Property="TextElement.Foreground" Value="{StaticResource Ok}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                        <Setter Property="Background" Value="{StaticResource Bg3}" />
+                                        <Setter Property="TextElement.Foreground" Value="{StaticResource Muted}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+                                     Fill="{Binding (TextElement.Foreground), RelativeSource={RelativeSource AncestorType=Border}}" />
+                            <TextBlock Margin="7,0,0,0" FontSize="12" FontWeight="SemiBold" Text="{Binding CaptureStatus}" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </DockPanel>
+
+            <!-- Banners -->
+            <StackPanel Grid.Row="1">
+                <Border Margin="0,0,0,12" Padding="14,10" CornerRadius="8" BorderThickness="1"
+                        Background="{StaticResource WarnSoft}" BorderBrush="{StaticResource WarnEdge}"
+                        Visibility="{Binding ShowCaptureBanner, Converter={StaticResource BoolToVis}}">
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Margin="12,0,0,0" Style="{StaticResource WarnButton}"
+                                Content="Restart as administrator" Command="{Binding RestartAsAdminCommand}"
+                                Visibility="{Binding ShowRestartButton, Converter={StaticResource BoolToVis}}" />
+                        <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource Warn}">
+                            <Run Text="{Binding CaptureError, Mode=OneWay}" FontWeight="SemiBold" />
+                            <Run Text=" Connections are still listed and total throughput comes from adapter counters, but per-app bandwidth and IP blocking are unavailable." />
+                        </TextBlock>
+                    </DockPanel>
+                </Border>
+                <Border Margin="0,0,0,12" Padding="14,10" CornerRadius="8" BorderThickness="1"
+                        Background="{StaticResource DangerSoft}" BorderBrush="{StaticResource DangerEdge}"
+                        Visibility="{Binding HasFirewallWarning, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding FirewallWarning}" Foreground="{StaticResource Danger}" TextWrapping="Wrap" />
+                </Border>
+            </StackPanel>
+
+            <!-- KPI tiles -->
+            <UniformGrid Grid.Row="2" Columns="5" Margin="-6,0,-6,14">
+                <Border Style="{StaticResource Panel}" Margin="6,0" Padding="16,12">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="8" Height="8" Fill="{StaticResource Down}" />
+                            <TextBlock Text="DOWNLOAD" Margin="8,0,0,0" Style="{StaticResource TileLabel}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding DownRateText}" Foreground="{StaticResource Down}" Style="{StaticResource TileValue}" />
+                        <TextBlock Text="{Binding PeakDownText, StringFormat='Peak {0}'}" Style="{StaticResource TileSub}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Panel}" Margin="6,0" Padding="16,12">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="8" Height="8" Fill="{StaticResource Up}" />
+                            <TextBlock Text="UPLOAD" Margin="8,0,0,0" Style="{StaticResource TileLabel}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding UpRateText}" Foreground="{StaticResource Up}" Style="{StaticResource TileValue}" />
+                        <TextBlock Text="{Binding PeakUpText, StringFormat='Peak {0}'}" Style="{StaticResource TileSub}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Panel}" Margin="6,0" Padding="16,12">
+                    <StackPanel>
+                        <TextBlock Text="SESSION DATA" Style="{StaticResource TileLabel}" />
+                        <TextBlock Style="{StaticResource TileValue}">
+                            <Run Text="↓ " Foreground="{StaticResource Down}" /><Run Text="{Binding TotalDownText, Mode=OneWay}" />
+                            <Run Text="   ↑ " Foreground="{StaticResource Up}" FontSize="16" /><Run Text="{Binding TotalUpText, Mode=OneWay}" FontSize="16" Foreground="{StaticResource Muted}" />
+                        </TextBlock>
+                        <TextBlock Text="{Binding TotalsCaption}" Style="{StaticResource TileSub}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Panel}" Margin="6,0" Padding="16,12">
+                    <StackPanel>
+                        <TextBlock Text="ACTIVE CONNECTIONS" Style="{StaticResource TileLabel}" />
+                        <TextBlock Text="{Binding ConnectionCount}" Style="{StaticResource TileValue}" />
+                        <TextBlock Style="{StaticResource TileSub}">
+                            <TextBlock.Text>
+                                <MultiBinding StringFormat="{}{0} apps · {1} remote hosts">
+                                    <Binding Path="AppCount" />
+                                    <Binding Path="HostCount" />
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Panel}" Margin="6,0" Padding="16,12">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="8" Height="8" Fill="{StaticResource Danger}" />
+                            <TextBlock Text="BLOCKED IPS" Margin="8,0,0,0" Style="{StaticResource TileLabel}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding BlockedCount}" Style="{StaticResource TileValue}" />
+                        <TextBlock Text="{Binding FirewallStatus}" Style="{StaticResource TileSub}" />
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <!-- Live chart -->
+            <Border Grid.Row="3" Style="{StaticResource Panel}" Padding="16,12,16,8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Rectangle Width="10" Height="10" RadiusX="2" RadiusY="2" Fill="{StaticResource Down}" />
+                            <TextBlock Text="Download" Margin="6,0,16,0" Foreground="{StaticResource Muted}" FontSize="12" />
+                            <Rectangle Width="10" Height="10" RadiusX="2" RadiusY="2" Fill="{StaticResource Up}" />
+                            <TextBlock Text="Upload" Margin="6,0,24,0" Foreground="{StaticResource Muted}" FontSize="12" />
+                            <CheckBox Content="Resolve host names" IsChecked="{Binding ResolveHostNames}" Margin="0,0,18,0"
+                                      ToolTip="Look up names for remote IPs with reverse DNS" />
+                            <CheckBox Content="Include loopback" IsChecked="{Binding IncludeLoopback}"
+                                      ToolTip="Also count traffic between programs on this PC (127.0.0.1 / ::1)" />
+                        </StackPanel>
+                        <TextBlock VerticalAlignment="Center">
+                            <Run Text="Throughput" FontWeight="SemiBold" />
+                            <Run Text=" · last 2 minutes" Foreground="{StaticResource Faint}" />
+                        </TextBlock>
+                    </DockPanel>
+                    <ctl:TrafficChart Grid.Row="1" Margin="0,8,0,0"
+                                      Points="{Binding ChartPoints}" Capacity="120"
+                                      DownBrush="{StaticResource Down}" UpBrush="{StaticResource Up}"
+                                      GridBrush="{StaticResource Line}" LabelBrush="{StaticResource Faint}"
+                                      PanelBrush="{StaticResource Bg2}" TextBrush="{StaticResource Text}" />
+                </Grid>
+            </Border>
+
+            <!-- Tables -->
+            <TabControl x:Name="Tabs" Grid.Row="4" Margin="0,10,0,0">
+                <TabItem>
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Connections" />
+                            <Border Style="{StaticResource CountBadge}">
+                                <TextBlock Text="{Binding ConnectionCount}" />
+                            </Border>
+                        </StackPanel>
+                    </TabItem.Header>
+                    <Border Style="{StaticResource Panel}" Padding="1">
+                        <Grid>
+                            <DataGrid x:Name="ConnectionsGrid" ItemsSource="{Binding ConnectionsView}">
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Block / unblock remote IP" Command="{Binding ToggleBlockCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="Copy remote IP" Command="{Binding CopyCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem.Remote, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="Copy host name" Command="{Binding CopyCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem.HostName, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="Show only this app" Command="{Binding FilterToAppCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="Open file location" Command="{Binding OpenLocationCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem.ProcessPath, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Header="Application" SortMemberPath="ProcessName" Width="190">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate DataType="vm:ConnectionRow">
+                                                <StackPanel VerticalAlignment="Center" ToolTip="{Binding ProcessPath}">
+                                                    <TextBlock Text="{Binding ProcessName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Pid, StringFormat='PID {0}'}" Foreground="{StaticResource Faint}" FontSize="11" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Proto" Binding="{Binding Protocol}" Width="68" ElementStyle="{StaticResource CellMuted}" />
+                                    <DataGridTemplateColumn Header="Remote address" SortMemberPath="Remote" Width="200"
+                                                            CellTemplate="{StaticResource RemoteAddressCell}" />
+                                    <DataGridTextColumn Header="Port" Binding="{Binding RemotePortText}" SortMemberPath="RemotePort" Width="104" ElementStyle="{StaticResource CellMuted}" />
+                                    <DataGridTextColumn Header="Host name" Binding="{Binding HostName}" Width="*" MinWidth="140" ElementStyle="{StaticResource Cell}" />
+                                    <DataGridTextColumn Header="State" Binding="{Binding State}" Width="112" ElementStyle="{StaticResource CellMuted}" />
+                                    <DataGridTemplateColumn Header="↓ Download" SortMemberPath="InRate" Width="112"
+                                                            CellTemplate="{StaticResource DownCell}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTemplateColumn Header="↑ Upload" SortMemberPath="OutRate" Width="112"
+                                                            CellTemplate="{StaticResource UpCell}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTextColumn Header="Local endpoint" Binding="{Binding Local}" Width="196" ElementStyle="{StaticResource Mono}" />
+                                    <DataGridTemplateColumn Header="" Width="96" CanUserSort="False" CellTemplate="{StaticResource BlockButtonCell}" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Style="{StaticResource EmptyWhenNoRows}" Tag="{Binding ElementName=ConnectionsGrid}"
+                                       Text="No connections match. Waiting for network activity, or clear the filter (Esc)." />
+                        </Grid>
+                    </Border>
+                </TabItem>
+
+                <TabItem>
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Applications" />
+                            <Border Style="{StaticResource CountBadge}">
+                                <TextBlock Text="{Binding AppCount}" />
+                            </Border>
+                        </StackPanel>
+                    </TabItem.Header>
+                    <Border Style="{StaticResource Panel}" Padding="1">
+                        <Grid>
+                            <DataGrid x:Name="AppsGrid" ItemsSource="{Binding AppsView}">
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Show only this app" Command="{Binding FilterToAppCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="Copy path" Command="{Binding CopyCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem.Path, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="Open file location" Command="{Binding OpenLocationCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem.Path, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Header="Application" SortMemberPath="Name" Width="220">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate DataType="vm:AppRow">
+                                                <StackPanel VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Pid, StringFormat='PID {0}'}" Foreground="{StaticResource Faint}" FontSize="11" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Connections" Binding="{Binding Connections}" Width="100"
+                                                        ElementStyle="{StaticResource CellNumber}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTextColumn Header="↓ Rate" Binding="{Binding InRateText}" SortMemberPath="InRate" Width="100"
+                                                        ElementStyle="{StaticResource RateDown}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTextColumn Header="↑ Rate" Binding="{Binding OutRateText}" SortMemberPath="OutRate" Width="100"
+                                                        ElementStyle="{StaticResource RateUp}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTextColumn Header="↓ Total" Binding="{Binding TotalInText}" SortMemberPath="TotalIn" Width="100"
+                                                        ElementStyle="{StaticResource CellNumber}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTextColumn Header="↑ Total" Binding="{Binding TotalOutText}" SortMemberPath="TotalOut" Width="100"
+                                                        ElementStyle="{StaticResource CellNumber}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="*" MinWidth="200">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource Cell}">
+                                                <Setter Property="Foreground" Value="{StaticResource Faint}" />
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                <Setter Property="ToolTip" Value="{Binding Path}" />
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Style="{StaticResource EmptyWhenNoRows}" Tag="{Binding ElementName=AppsGrid}"
+                                       Text="No applications have used the network yet." />
+                        </Grid>
+                    </Border>
+                </TabItem>
+
+                <TabItem>
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Remote hosts" />
+                            <Border Style="{StaticResource CountBadge}">
+                                <TextBlock Text="{Binding HostCount}" />
+                            </Border>
+                        </StackPanel>
+                    </TabItem.Header>
+                    <Border Style="{StaticResource Panel}" Padding="1">
+                        <Grid>
+                            <DataGrid x:Name="HostsGrid" ItemsSource="{Binding HostsView}">
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Block / unblock this IP" Command="{Binding ToggleBlockCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="Copy IP" Command="{Binding CopyCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem.Address, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="Copy host name" Command="{Binding CopyCommand}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem.HostName, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Header="Remote address" SortMemberPath="Address" Width="220"
+                                                            CellTemplate="{StaticResource RemoteAddressCell}" />
+                                    <DataGridTextColumn Header="Host name" Binding="{Binding HostName}" Width="*" MinWidth="160" ElementStyle="{StaticResource Cell}" />
+                                    <DataGridTextColumn Header="Applications" Binding="{Binding AppNames}" Width="200" ElementStyle="{StaticResource CellMuted}" />
+                                    <DataGridTextColumn Header="Conns" Binding="{Binding Connections}" Width="66"
+                                                        ElementStyle="{StaticResource CellNumber}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTextColumn Header="↓ Rate" Binding="{Binding InRateText}" SortMemberPath="InRate" Width="94"
+                                                        ElementStyle="{StaticResource RateDown}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTextColumn Header="↑ Rate" Binding="{Binding OutRateText}" SortMemberPath="OutRate" Width="94"
+                                                        ElementStyle="{StaticResource RateUp}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTextColumn Header="↓ Total" Binding="{Binding TotalInText}" SortMemberPath="TotalIn" Width="90"
+                                                        ElementStyle="{StaticResource CellNumber}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTextColumn Header="↑ Total" Binding="{Binding TotalOutText}" SortMemberPath="TotalOut" Width="90"
+                                                        ElementStyle="{StaticResource CellNumber}" HeaderStyle="{StaticResource RightHeader}" />
+                                    <DataGridTemplateColumn Header="" Width="96" CanUserSort="False" CellTemplate="{StaticResource BlockButtonCell}" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Style="{StaticResource EmptyWhenNoRows}" Tag="{Binding ElementName=HostsGrid}"
+                                       Text="No remote hosts match." />
+                        </Grid>
+                    </Border>
+                </TabItem>
+
+                <TabItem>
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Blocked IPs" />
+                            <Border Style="{StaticResource CountBadge}">
+                                <TextBlock Text="{Binding BlockedCount}" />
+                            </Border>
+                        </StackPanel>
+                    </TabItem.Header>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <DockPanel Margin="0,0,0,10">
+                            <Button DockPanel.Dock="Right" Content="Unblock all" Command="{Binding UnblockAllCommand}" />
+                            <StackPanel Orientation="Horizontal">
+                                <TextBox Width="360" Tag="IP or range, e.g. 203.0.113.7 or 203.0.113.0/24"
+                                         Text="{Binding BlockInput, UpdateSourceTrigger=PropertyChanged}">
+                                    <TextBox.InputBindings>
+                                        <KeyBinding Key="Enter" Command="{Binding BlockManualCommand}" />
+                                    </TextBox.InputBindings>
+                                </TextBox>
+                                <Button Margin="8,0,0,0" Style="{StaticResource DangerButton}" Content="Block" Command="{Binding BlockManualCommand}" />
+                                <TextBlock Margin="16,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource Faint}" TextWrapping="Wrap" MaxWidth="460"
+                                           Text="Blocks are Windows Firewall rules (group “NetProfiler”). They block both directions and stay active after NetProfiler closes." />
+                            </StackPanel>
+                        </DockPanel>
+                        <TextBlock Grid.Row="1" Margin="2,0,0,10" Text="{Binding BlockError}" Foreground="{StaticResource Danger}"
+                                   Visibility="{Binding HasBlockError, Converter={StaticResource BoolToVis}}" />
+                        <Border Grid.Row="2" Style="{StaticResource Panel}" Padding="1">
+                            <Grid>
+                                <DataGrid x:Name="BlockedGrid" ItemsSource="{Binding Blocked}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Address or range" Binding="{Binding TargetText}" Width="240" ElementStyle="{StaticResource Mono}" />
+                                        <DataGridTextColumn Header="Host name" Binding="{Binding HostName}" Width="*" MinWidth="160" ElementStyle="{StaticResource Cell}" />
+                                        <DataGridTextColumn Header="Direction" Binding="{Binding Directions}" Width="160" ElementStyle="{StaticResource CellMuted}" />
+                                        <DataGridTextColumn Header="Blocked on" Binding="{Binding Added}" Width="160" ElementStyle="{StaticResource CellMuted}" />
+                                        <DataGridTemplateColumn Header="" Width="104" CanUserSort="False">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Content="Unblock" Padding="0,3" Width="80" FontSize="12" FontWeight="SemiBold"
+                                                            HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                            Foreground="{StaticResource Ok}" Background="{StaticResource OkSoft}" BorderBrush="{StaticResource OkEdge}"
+                                                            Command="{Binding DataContext.UnblockCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <TextBlock Style="{StaticResource EmptyWhenNoRows}" Tag="{Binding ElementName=BlockedGrid}"
+                                           Text="Nothing is blocked. Use the Block button on a connection or remote host, or enter an address above." />
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="Activity">
+                    <Border Style="{StaticResource Panel}" Padding="14,10">
+                        <ListBox ItemsSource="{Binding Log}" Style="{StaticResource PlainList}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="vm:LogEntry">
+                                    <DockPanel Margin="0,4">
+                                        <TextBlock DockPanel.Dock="Left" Width="76" Text="{Binding Time}" Style="{StaticResource Mono}"
+                                                   Foreground="{StaticResource Faint}" />
+                                        <TextBlock Text="{Binding Message}" TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource Text}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Level}" Value="Success">
+                                                            <Setter Property="Foreground" Value="{StaticResource Ok}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Level}" Value="Warning">
+                                                            <Setter Property="Foreground" Value="{StaticResource Warn}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Level}" Value="Error">
+                                                            <Setter Property="Foreground" Value="{StaticResource Danger}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                </TabItem>
+            </TabControl>
+
+            <!-- Status bar -->
+            <DockPanel Grid.Row="5" Margin="2,10,2,0">
+                <TextBlock DockPanel.Dock="Right" Text="Right-click a row for more actions" Foreground="{StaticResource Faint}" FontSize="12" />
+                <TextBlock Text="{Binding CaptureDetail}" Foreground="{StaticResource Faint}" FontSize="12" TextTrimming="CharacterEllipsis" />
+            </DockPanel>
+        </Grid>
+    </Grid>
+</Window>

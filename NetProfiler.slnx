@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NetProfiler.Core/NetProfiler.Core.csproj" />
+    <Project Path="src/NetProfiler/NetProfiler.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NetProfiler.Tests/NetProfiler.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>NetProfiler</AssemblyName>
+    <Product>NetProfiler</Product>
+    <AssemblyTitle>NetProfiler - real-time network profiler</AssemblyTitle>
+    <Version>1.0.0</Version>
+    <!-- Live capture (ETW) and firewall changes need admin, so the app asks for it via UAC. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- dotnet build -p:RunAsInvoker=true gives a build that starts without UAC (limited mode). -->
+    <ApplicationManifest Condition="'$(RunAsInvoker)' == 'true'">app.invoker.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NetProfiler.Core\NetProfiler.Core.csproj" />
+  </ItemGroup>
+
+</Project>
