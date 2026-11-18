@@ -67,3 +67,7 @@ src/NetProfiler.Core/   capture, aggregation, firewall, DNS, TCP table  (no UI; 
 src/NetProfiler/        WPF app: MainWindow, view models, live chart, dark theme
 tests/NetProfiler.Tests xUnit tests for the core
 ```
+
+## License
+
+[MIT](LICENSE)
